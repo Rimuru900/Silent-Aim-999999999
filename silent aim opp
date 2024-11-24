@@ -1,0 +1,200 @@
+getgenv().SilentAim = {
+    Enabled = true, -- Toggle silent aim (set this to true for it to work)
+    FOV = 125, -- Field of view for targeting
+    AimPart = "UpperTorso", -- The part to aim at
+    TeamCheck = true, -- Avoid targeting teammates
+    FriendCheck = true, -- Automatically avoid targeting friends
+    AutoShoot = true, -- Automatically shoot at the closest valid target
+    TargetTransparency = 0.5, -- Transparency for the target
+    Filled = false, -- Toggle whether the FOV circle is filled
+    FOVTransparency = 0.5, -- Transparency for the FOV circle
+    FOVThickness = 1, -- Thickness of the FOV circle
+    HitChance = 99999, -- Ensures target is always hit
+    AutoPrediction = true, -- Automatically adjusts prediction for moving targets
+    Prediction = 0.168, -- Base prediction value for lead shots
+    JumpOffset = 0.35, -- Accounts for target's vertical movement
+    AntiGroundshot = true, -- Avoids ground-level targets
+    LockTarget = true, -- Lock onto a single target
+    HighlightColor = Color3.new(0, 1, 0), -- Color for highlighting the target (green)
+    HighlightEnabled = true -- Toggle highlighting
+}
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Mouse = LocalPlayer:GetMouse()
+
+-- Create the FOV Circle
+local fovCircle = Drawing.new("Circle")
+fovCircle.Radius = getgenv().SilentAim.FOV
+fovCircle.Color = Color3.new(1, 0, 0) -- Red color
+fovCircle.Thickness = getgenv().SilentAim.FOVThickness -- Apply thickness
+fovCircle.Filled = getgenv().SilentAim.Filled
+fovCircle.Transparency = getgenv().SilentAim.FOVTransparency
+fovCircle.Visible = getgenv().SilentAim.Enabled
+
+-- Highlight the target
+local highlight = Drawing.new("Circle")
+highlight.Radius = getgenv().SilentAim.FOV
+highlight.Color = getgenv().SilentAim.HighlightColor -- Highlight color
+highlight.Thickness = 2
+highlight.Filled = true
+highlight.Visible = false
+
+-- Update FOV circle position dynamically
+RunService.RenderStepped:Connect(function()
+    local touchPosition = UIS:GetLastInputType() == Enum.UserInputType.Touch and UIS.TouchEnabled and UIS.TouchPositions[1]
+    local inputPosition = touchPosition or Vector2.new(UIS:GetMouseLocation().X, UIS:GetMouseLocation().Y)
+
+    fovCircle.Position = inputPosition
+    fovCircle.Radius = getgenv().SilentAim.FOV
+    fovCircle.Filled = getgenv().SilentAim.Filled
+    fovCircle.Transparency = getgenv().SilentAim.FOVTransparency
+    fovCircle.Thickness = getgenv().SilentAim.FOVThickness -- Update thickness dynamically
+    fovCircle.Visible = getgenv().SilentAim.Enabled
+end)
+
+-- Function to calculate prediction offset
+local function calculatePrediction(target)
+    local velocity = target.Character.HumanoidRootPart.Velocity
+    return velocity * (getgenv().SilentAim.AutoPrediction and getgenv().SilentAim.Prediction or 1)
+end
+
+-- Function to find the closest player
+local function getClosestPlayer()
+    local closest, shortestDistance = nil, getgenv().SilentAim.FOV
+    local playersInFOV = {}
+
+    -- Automatically get the list of friends for the local player
+    local friends = {}
+    local success, friendsList = pcall(function()
+        return LocalPlayer:GetFriendsAsync()
+    end)
+    if success then
+        for _, friend in ipairs(friendsList) do
+            friends[friend.UserId] = true
+        end
+    end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild(getgenv().SilentAim.AimPart) then
+            -- Exclude teammates and friends
+            if getgenv().SilentAim.TeamCheck and player.Team == LocalPlayer.Team then
+                continue
+            end
+            if getgenv().SilentAim.FriendCheck and friends[player.UserId] then
+                continue
+            end
+
+            local aimPart = player.Character[getgenv().SilentAim.AimPart]
+            local screenPoint, onScreen = Camera:WorldToViewportPoint(aimPart.Position)
+
+            if onScreen then
+                local touchPosition = UIS:GetLastInputType() == Enum.UserInputType.Touch and UIS.TouchEnabled and UIS.TouchPositions[1]
+                local inputPosition = touchPosition or Vector2.new(UIS:GetMouseLocation().X, UIS:GetMouseLocation().Y)
+
+                local distance = (Vector2.new(screenPoint.X, screenPoint.Y) - inputPosition).Magnitude
+                local verticalOffset = math.abs(player.Character.HumanoidRootPart.Position.Y - LocalPlayer.Character.HumanoidRootPart.Position.Y)
+
+                -- Apply checks for AntiGroundshot and other conditions
+                if distance < shortestDistance 
+                    and (not getgenv().SilentAim.AntiGroundshot or verticalOffset > getgenv().SilentAim.JumpOffset) then
+                    table.insert(playersInFOV, {player = player, distance = distance})
+                    if distance < shortestDistance then
+                        closest, shortestDistance = player, distance
+                    end
+                end
+            end
+        end
+    end
+
+    -- If too many players are in the FOV circle, lock onto the closest one
+    if #playersInFOV > 1 then
+        for _, data in pairs(playersInFOV) do
+            if data.player == closest then
+                highlight.Position = Camera:WorldToViewportPoint(data.player.Character[getgenv().SilentAim.AimPart].Position)
+                highlight.Visible = getgenv().SilentAim.HighlightEnabled
+            end
+        end
+    end
+
+    return closest
+end
+
+-- Set transparency for the target
+local function setTransparency(target, transparency)
+    if target and target.Character then
+        for _, part in ipairs(target.Character:GetDescendants()) do
+            if part:IsA("BasePart") and part.Transparency ~= transparency then
+                part.Transparency = transparency
+            end
+        end
+    end
+end
+
+-- Function to get the current weapon/tool the player is holding
+local function getCurrentWeapon()
+    local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+    return tool
+end
+
+-- AutoShoot functionality
+RunService.RenderStepped:Connect(function()
+    if getgenv().SilentAim.AutoShoot and getgenv().SilentAim.Enabled then
+        local target = getClosestPlayer()
+        if target and target.Character and target.Character:FindFirstChild(getgenv().SilentAim.AimPart) then
+            -- Get the current weapon
+            local weapon = getCurrentWeapon()
+            if weapon then
+                -- Calculate the target's predicted position
+                local predictionOffset = calculatePrediction(target)
+                local targetPos = target.Character[getgenv().SilentAim.AimPart].Position + predictionOffset
+
+                -- Fire the bullet towards the target's predicted position
+                -- Make sure this matches the way your game handles shooting, for example using raycasting
+                -- Here, we simulate the firing of the weapon
+                -- Replace the next lines with your actual weapon's firing logic
+
+                -- Fire the weapon (you would trigger the actual firing event here)
+                weapon:Activate()  -- Activate the tool (assuming the tool fires on activation)
+                
+                -- Simulate aiming towards the predicted position (this is just a placeholder for the actual firing logic)
+                -- You may need to call specific functions for shooting or simulate a mouse click (e.g., Mouse1Press)
+
+                Mouse1Press() -- Simulate mouse click
+                wait(0.1) -- Simulate a small delay
+                Mouse1Release() -- Release the mouse click
+            end
+        end
+    end
+end)
+
+-- Silent aim functionality
+local mt = getrawmetatable(game)
+local oldIndex = mt.__index
+setreadonly(mt, false)
+
+mt.__index = function(self, key)
+    if key == "Hit" and getgenv().SilentAim.Enabled then
+        local target = getClosestPlayer()
+        if target and target.Character and target.Character:FindFirstChild(getgenv().SilentAim.AimPart) then
+            setTransparency(target, getgenv().SilentAim.TargetTransparency) -- Apply transparency
+            local predictionOffset = calculatePrediction(target) -- Add prediction offset
+
+            -- Adjust the bullet trajectory to hit the target
+            return oldIndex(self, "Hit", target.Character[getgenv().SilentAim.AimPart].Position + predictionOffset)
+        end
+    end
+
+    return oldIndex(self, key)
+end
+
+setreadonly(mt, true)
+
+-- Ensure silent aim persists if the local player dies
+LocalPlayer.CharacterAdded:Connect(function(character)
+    wait(1) -- Wait for the character to fully respawn
+    fovCircle.Visible = getgenv().SilentAim.Enabled -- Keep circle on screen after respawn
+end)
