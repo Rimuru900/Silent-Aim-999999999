@@ -1,3 +1,4 @@
+-- SilentAim configuration
 getgenv().SilentAim = {
     Enabled = true, -- Toggle silent aim (set this to true for it to work)
     FOV = 125, -- Field of view for targeting
@@ -43,12 +44,26 @@ highlight.Thickness = 2
 highlight.Filled = true
 highlight.Visible = false
 
--- Update FOV circle position dynamically
+-- Update FOV circle position dynamically based on touch input
 RunService.RenderStepped:Connect(function()
-    local touchPosition = UIS:GetLastInputType() == Enum.UserInputType.Touch and UIS.TouchEnabled and UIS.TouchPositions[1]
-    local inputPosition = touchPosition or Vector2.new(UIS:GetMouseLocation().X, UIS:GetMouseLocation().Y)
+    local inputPosition = nil
 
-    fovCircle.Position = inputPosition
+    -- For mobile, use touch input instead of mouse
+    if UIS.TouchEnabled then
+        local touch = UIS:GetTouches()
+        if #touch > 0 then
+            -- Use the first touch input
+            inputPosition = Vector2.new(touch[1].Position.X, touch[1].Position.Y)
+        end
+    else
+        -- Fallback to mouse input if touch isn't available
+        inputPosition = Vector2.new(UIS:GetMouseLocation().X, UIS:GetMouseLocation().Y)
+    end
+
+    -- Update the position of the FOV circle
+    if inputPosition then
+        fovCircle.Position = inputPosition
+    end
     fovCircle.Radius = getgenv().SilentAim.FOV
     fovCircle.Filled = getgenv().SilentAim.Filled
     fovCircle.Transparency = getgenv().SilentAim.FOVTransparency
@@ -92,8 +107,16 @@ local function getClosestPlayer()
             local screenPoint, onScreen = Camera:WorldToViewportPoint(aimPart.Position)
 
             if onScreen then
-                local touchPosition = UIS:GetLastInputType() == Enum.UserInputType.Touch and UIS.TouchEnabled and UIS.TouchPositions[1]
-                local inputPosition = touchPosition or Vector2.new(UIS:GetMouseLocation().X, UIS:GetMouseLocation().Y)
+                local inputPosition = nil
+                -- Handle touch input
+                if UIS.TouchEnabled then
+                    local touch = UIS:GetTouches()
+                    if #touch > 0 then
+                        inputPosition = Vector2.new(touch[1].Position.X, touch[1].Position.Y)
+                    end
+                else
+                    inputPosition = Vector2.new(UIS:GetMouseLocation().X, UIS:GetMouseLocation().Y)
+                end
 
                 local distance = (Vector2.new(screenPoint.X, screenPoint.Y) - inputPosition).Magnitude
                 local verticalOffset = math.abs(player.Character.HumanoidRootPart.Position.Y - LocalPlayer.Character.HumanoidRootPart.Position.Y)
@@ -161,11 +184,11 @@ RunService.RenderStepped:Connect(function()
                 weapon:Activate()  -- Activate the tool (assuming the tool fires on activation)
                 
                 -- Simulate aiming towards the predicted position (this is just a placeholder for the actual firing logic)
-                -- You may need to call specific functions for shooting or simulate a mouse click (e.g., Mouse1Press)
+                -- You may need to call specific functions for shooting or simulate a touch press (e.g., Touch1Press)
 
-                Mouse1Press() -- Simulate mouse click
+                Touch1Press() -- Simulate touch press
                 wait(0.1) -- Simulate a small delay
-                Mouse1Release() -- Release the mouse click
+                Touch1Release() -- Release the touch press
             end
         end
     end
@@ -178,23 +201,13 @@ setreadonly(mt, false)
 
 mt.__index = function(self, key)
     if key == "Hit" and getgenv().SilentAim.Enabled then
-        local target = getClosestPlayer()
-        if target and target.Character and target.Character:FindFirstChild(getgenv().SilentAim.AimPart) then
-            setTransparency(target, getgenv().SilentAim.TargetTransparency) -- Apply transparency
-            local predictionOffset = calculatePrediction(target) -- Add prediction offset
-
-            -- Adjust the bullet trajectory to hit the target
-            return oldIndex(self, "Hit", target.Character[getgenv().SilentAim.AimPart].Position + predictionOffset)
+        -- Adjust the aim to the predicted position
+        local closest = getClosestPlayer()
+        if closest then
+            return closest.Character[getgenv().SilentAim.AimPart].Position + calculatePrediction(closest)
         end
     end
-
     return oldIndex(self, key)
 end
 
 setreadonly(mt, true)
-
--- Ensure silent aim persists if the local player dies
-LocalPlayer.CharacterAdded:Connect(function(character)
-    wait(1) -- Wait for the character to fully respawn
-    fovCircle.Visible = getgenv().SilentAim.Enabled -- Keep circle on screen after respawn
-end)
